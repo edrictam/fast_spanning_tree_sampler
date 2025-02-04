@@ -1,0 +1,15 @@
+```{r}
+library(igraph)
+
+# Read the GraphML file
+g2 <- read_graph("saved_trajectories/spr_trees/tree10.graphml", format = "graphml")
+g3 <- read_graph("saved_trajectories/spr_trees/tree4001.graphml", format = "graphml")
+g14 <- read_graph("saved_trajectories/spr_trees/tree4002.graphml", format = "graphml")
+g15 <- read_graph("saved_trajectories/spr_trees/tree4003.graphml", format = "graphml")
+```
+
+```{r}
+plot(g2)
+```
+
+

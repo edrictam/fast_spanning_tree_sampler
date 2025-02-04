@@ -1,0 +1,50 @@
+---
+title: "Reversible Jump MCMC (Competitor)"
+format: pdf
+---
+
+```{r}
+## Load all relevant functions
+source("helpers/rjmcmc_sampling_functions.R")
+
+## Set random seed
+set.seed(100)
+
+## Read in cleaned dataset
+y_pre = read.csv("data/cleaned_data_income_rent.csv")
+
+## Drop the first column, which is just row index
+y = data.matrix(y_pre[,2:3])
+```
+
+ 
+```{r}
+## Run the RJMCMC sampler
+
+## Get the dimensions of the data
+n = dim(y)[1]
+p = dim(y)[2]
+
+## In the absence of knowledge on K, take the overfitted approach and set K as n
+K = floor(n/4) # floor(n/4) very good with nu = n and delta = 1/4 and Sigma - 0.04 diag  
+
+## Inverse Wishart prior hyperparameters for Sigma
+nu = n
+Sigma_0 = 0.2^2*diag(p)
+delta = 1/4
+
+
+## Set birth-death p0 parameter
+
+p0 = 0.1 # 0.25 before
+tuning = 0.01 # 0.1 before and 1500 samples ok la
+
+## Main RJMCMC Sampler function
+res.rjmcmc = rjmcmc(y, K,niter =5000, nu, Sigma_0, delta, p0, verbose = TRUE, tuning)
+# res.rjmcmc = rjmcmc_fixed_variances(y, K,niter =5000, Sigma_0, lambda_sq, p0, verbose = TRUE)
+
+## Save Gibbs Output
+save(res.rjmcmc, file = "saved_trajectories/rjmcmc_output.RData")
+```
+
+

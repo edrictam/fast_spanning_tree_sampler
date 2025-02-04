@@ -1,0 +1,311 @@
+---
+title: "Laplace Speed Comparisons"
+format: pdf
+---
+
+```{r message = FALSE}
+library(Rcpp)
+library(RcppArmadillo)
+library(igraph)
+library(MASS)
+library(tidyverse)
+library(tictoc)
+set.seed(100)
+```
+
+```{r}
+sourceCpp('helpers/fastcover/fastcover_older_version.cpp')
+sourceCpp("helpers/fastcover/laplacian.cpp")
+
+reps = 5
+init = 0
+
+num_vert = 100
+density = c(0.01, 0.05, 0.1, 0.5)
+spectral_gaps = rep(0, length(density))
+runtime_laplace = matrix(rep(0, length(density)*reps), length(density), reps)
+runtime_fast = matrix(rep(0, length(density)*reps), length(density), reps)
+
+
+set.seed(100)
+
+for (j in 1:length(density)) {
+  ## Generate graph with bottle neck 
+  dens = density[j]
+  
+  A_1<- matrix(rep(1, num_vert*num_vert), num_vert, num_vert)
+  A_2<- matrix(rep(1, num_vert*num_vert), num_vert, num_vert)
+  
+  A <- matrix(0, 2*num_vert, 2*num_vert)
+  A[1:num_vert, 1:num_vert] <- A_1
+  A[(num_vert + 1):(2*num_vert),(num_vert + 1):(2*num_vert)] <- A_2
+  diag(A) <- 0
+  
+  # make sure rbinom(num_vert^2, 1, dens) has at least one non-zero value!
+  
+  off_diags = matrix(rbinom(num_vert^2, 1, dens), num_vert, num_vert)
+  U_between = matrix(runif(num_vert*num_vert, 0, 1), num_vert, num_vert)
+  off_diags = off_diags * U_between
+  
+  A[1:num_vert, (num_vert + 1):(2*num_vert)] <- off_diags
+  A[(num_vert + 1):(2*num_vert), 1:num_vert] <- t(off_diags)
+  
+  print("fastcover time: ")
+  for (i in 1:reps) {
+    tic()
+    a1 <- fastCoverThreshold(A, init, num_vert*10, FALSE)
+    x = toc()
+    runtime_fast[j, i] = x$toc - x$tic
+  }
+  
+  print("Laplace time: ")
+  for (i in 1:reps) {
+    tic()
+    a2 <- chain(A)
+    x = toc()
+    runtime_laplace[j, i] = x$toc - x$tic
+  }
+  
+  D = diag(rowSums(A))
+  Dhalfinv = diag(1/sqrt(rowSums(A)))
+  nL = Dhalfinv%*%(D-A)%*%Dhalfinv
+  print("spectral gap is")
+  gap = eigen(nL)$values[2*num_vert-1]
+  print(1/sqrt(gap))
+  spectral_gaps[j] = 1/sqrt(gap)
+}
+```
+
+```{r}
+
+laplace_df = as.data.frame(t(runtime_laplace)) 
+fast_df = as.data.frame(t(runtime_fast)) 
+
+colnames(laplace_df) = spectral_gaps
+cleaned_laplace <- laplace_df |> pivot_longer(cols = everything(), names_to = "spectral_gap") |> 
+  group_by(spectral_gap) |> arrange(as.numeric(spectral_gap))
+
+
+colnames(fast_df) = spectral_gaps
+cleaned_fast <- fast_df |> pivot_longer(cols = everything(), names_to = "spectral_gap") |> 
+  group_by(spectral_gap) |> arrange(as.numeric(spectral_gap))
+
+
+cleaned_laplace <- cleaned_laplace |> mutate(type = "Laplacian")
+cleaned_fast <- cleaned_fast |> mutate(type = "Fast-forwarded")
+case_final <- rbind(cleaned_fast, cleaned_laplace)
+
+
+# The palette with black:
+cbPalette <- c("#999999","#0072B2", "#D55E00", "#56B4E9", "#009E73", "#F0E442", "#E69F00",  "#CC79A7")
+
+gap_names = c("graph 1", "graph 2", "graph 3", "graph 4")
+case_final |> ggplot() +
+    geom_boxplot(aes(x=reorder(spectral_gap,as.numeric(spectral_gap)), y=value, fill = type), outlier.shape = NA) +
+  labs(fill = "Algorithm") + 
+  xlab("") + 
+  ylab("Runtime (seconds)") + 
+  scale_x_discrete(labels = gap_names) + 
+  theme_bw() + 
+  scale_fill_manual(values=cbPalette) + theme(legend.position = "none") + 
+  theme(text = element_text(size=16)) + 
+  ylim(-1, 35)
+
+ggsave("images/computational_time/laplace_bottleneck.pdf", height = 4)
+```
+
+
+
+
+
+```{r}
+set.seed(100)
+reps = 10
+init = 0
+
+num_vert = 200
+blocks = c(2, 4, 8, 10)
+cross_factors = 0.005 * c(1/2, 1/4, 1/8, 1/10)
+runtime_laplace_c = matrix(rep(0, length(blocks)*reps), length(blocks), reps)
+runtime_fast_c = matrix(rep(0, length(blocks)*reps), length(blocks), reps)
+
+
+for (j in 1:length(blocks)) {
+  cross_factor = cross_factors[j]
+  ## Generate graph with blocks
+  num_block = blocks[j]
+  A <- matrix(0, num_vert, num_vert)
+  
+  for (qq in 1:num_block){
+    block_size= num_vert/num_block
+    A_s = matrix(rep(1,block_size*block_size), block_size, block_size)
+    A[(qq-1)*block_size + (1:block_size), (qq-1)*block_size + (1:block_size)] <- A_s
+    
+    complement = setdiff(1:num_vert, (qq-1)*block_size + (1:block_size))
+    
+    between_block = matrix(rbinom((num_vert-block_size) * block_size, 1, cross_factor), num_vert - block_size, block_size)
+    
+    A[complement, (qq-1)*block_size + (1:block_size)] = between_block
+    A[(qq-1)*block_size + (1:block_size), complement] = t(between_block)
+  }
+
+  diag(A) <- 0
+ 
+  
+  print("fastcover time: ")
+  for (i in 1:reps) {
+    tic()
+    a1 <- fastCoverThreshold(A, init, num_vert*10, verbose = FALSE)
+    x = toc()
+    runtime_fast_c[j, i] = x$toc - x$tic
+
+  }
+  
+  print("laplace time: ")
+  for (i in 1:reps) {
+    tic()
+    a1 <- chain(A)
+    x = toc()
+    runtime_laplace_c[j, i] = x$toc - x$tic
+
+  }
+
+ 
+}
+```
+
+```{r}
+
+fast_df_c = as.data.frame(t(runtime_fast_c)) 
+laplace_df_c = as.data.frame(t(runtime_laplace_c)) 
+
+colnames(laplace_df_c) = blocks
+cleaned_laplace_c <- laplace_df_c |> pivot_longer(cols = everything(), names_to = "blocks") |> 
+  group_by(blocks) |> arrange(as.numeric(blocks))
+
+
+colnames(fast_df_c) = blocks
+cleaned_fast_c <- fast_df_c |> pivot_longer(cols = everything(), names_to = "blocks") |> 
+  group_by(blocks) |> arrange(as.numeric(blocks))
+
+
+cleaned_laplace_c <- cleaned_laplace_c |> mutate(type = "Laplacian")
+cleaned_fast_c <- cleaned_fast_c |> mutate(type = "Fast-forwarded")
+case_final_c <- rbind(cleaned_fast_c, cleaned_laplace_c)
+
+
+# The palette with black:
+cbPalette <- c("#999999", "#0072B2", "#D55E00", "#56B4E9", "#009E73", "#F0E442", "#E69F00",  "#CC79A7")
+
+block_names = c("2 blocks", "4 blocks", "8 blocks", "10 blocks")
+case_final_c |> ggplot() +
+    geom_boxplot(aes(x=reorder(as.factor(blocks),as.numeric(blocks)), y=value, fill = type), outlier.shape = NA) +
+  labs(fill = "Algorithm") + 
+  xlab("") + 
+  ylab("Runtime (seconds)") + 
+  scale_x_discrete(labels = block_names) + 
+  theme_bw() + 
+  scale_fill_manual(values=cbPalette) + theme(legend.position = "none") + 
+  theme(text = element_text(size=20)) + 
+  ylim(-1, 20)
+
+
+ggsave("images/computational_time/laplace_blocks.pdf", height = 4)
+```
+
+
+
+
+
+```{r}
+set.seed(100)
+reps = 10
+init = 0
+
+vertices = c(1, 1.2, 1.6, 2) * 50
+runtime_laplace_s = matrix(rep(0, length(vertices)*reps), length(vertices), reps)
+runtime_fast_s = matrix(rep(0, length(vertices)*reps), length(vertices), reps)
+
+
+dens = 0.1
+for (j in 1:length(vertices)) {
+  ## Generate graph with bottle neck 
+  num_vert = vertices[j]
+  
+  A_1<- matrix(rep(1, num_vert*num_vert), num_vert, num_vert)
+  A_2<- matrix(rep(1, num_vert*num_vert), num_vert, num_vert)
+
+  A <- matrix(0, 2*num_vert, 2*num_vert)
+  A[1:num_vert, 1:num_vert] <- A_1
+  A[(num_vert + 1):(2*num_vert),(num_vert + 1):(2*num_vert)] <- A_2
+  diag(A) <- 0
+  
+  off_diags = matrix(rbinom(num_vert^2, 1, dens), num_vert, num_vert)
+  
+  A[1:num_vert, (num_vert + 1):(2*num_vert)] <- off_diags
+  A[(num_vert + 1):(2*num_vert), 1:num_vert] <- t(off_diags)
+  
+
+  print("fastcover time: ")
+  for (i in 1:reps) {
+    tic()
+    a1 <- fastCoverThreshold(A, init, 1000, verbose = FALSE)
+    x = toc()
+    runtime_fast_s[j, i] = x$toc - x$tic
+
+  }
+  
+  print("laplace time: ")
+  for (i in 1:reps) {
+    tic()
+    a1 <- chain(A)
+    x = toc()
+    runtime_laplace_s[j, i] = x$toc - x$tic
+
+  }
+ 
+}
+
+```
+
+
+
+
+```{r}
+
+laplace_df_s = as.data.frame(t(runtime_laplace_s))
+fast_df_s = as.data.frame(t(runtime_fast_s))
+
+
+colnames(laplace_df_s) = vertices*2
+cleaned_laplace_s <- laplace_df_s |> pivot_longer(cols = everything(), names_to = "vertices") |> 
+  group_by(vertices) |> arrange(as.numeric(vertices))
+
+
+colnames(fast_df_s) = vertices * 2
+cleaned_fast_s <- fast_df_s |> pivot_longer(cols = everything(), names_to = "vertices") |> 
+  group_by(vertices) |> arrange(as.numeric(vertices))
+
+
+cleaned_laplace_s <- cleaned_laplace_s |> mutate(type = "Laplacian")
+cleaned_fast_s <- cleaned_fast_s |> mutate(type = "Fast-forwarded")
+case_final_s <- rbind(cleaned_fast_s, cleaned_laplace_s)
+
+
+# The palette with black:
+cbPalette <- c("#999999", "#0072B2", "#D55E00", "#56B4E9", "#009E73", "#F0E442", "#E69F00", "#CC79A7")
+
+vertex_names = 2*vertices
+case_final_s |> ggplot() +
+    geom_boxplot(aes(x=reorder(as.factor(vertices),as.numeric(vertices)), y=value, fill = type), outlier.shape = NA) +
+  labs(fill = "Algorithm") + 
+  xlab("") + 
+  ylab("Runtime (seconds)") + 
+  scale_x_discrete(labels = vertex_names) + 
+  theme_bw() + 
+  scale_fill_manual(values=cbPalette) + theme(legend.position = "none") + 
+  theme(text = element_text(size=20)) + 
+  ylim(-1, 30)
+
+ggsave("images/computational_time/laplace_vertices.pdf", height = 4)
+```

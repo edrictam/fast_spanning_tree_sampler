@@ -1,0 +1,37 @@
+"0","library(tidyverse)"
+"2","── [1mAttaching core tidyverse packages[22m ───────────────────────────── tidyverse 2.0.0 ──
+[32m✔[39m [34mdplyr    [39m 1.1.4     [32m✔[39m [34mreadr    [39m 2.1.5
+[32m✔[39m [34mforcats  [39m 1.0.0     [32m✔[39m [34mstringr  [39m 1.5.1
+[32m✔[39m [34mggplot2  [39m 3.5.1     [32m✔[39m [34mtibble   [39m 3.2.1
+[32m✔[39m [34mlubridate[39m 1.9.4     [32m✔[39m [34mtidyr    [39m 1.3.1
+[32m✔[39m [34mpurrr    [39m 1.0.2     "
+"2","── [1mConflicts[22m ─────────────────────────────────────────────── tidyverse_conflicts() ──
+[31m✖[39m [34mdplyr[39m::[32mfilter()[39m masks [34mstats[39m::filter()
+[31m✖[39m [34mdplyr[39m::[32mlag()[39m    masks [34mstats[39m::lag()
+[36mℹ[39m Use the ]8;;http://conflicted.r-lib.org/conflicted package]8;; to force all conflicts to become errors"
+"0","## Read in relevant crimes and communities dataset"
+"0",""
+"0","df = read.csv(""data/crimedata.csv"")"
+"0",""
+"0","## Replace empty data with ""?"" entries to NA"
+"0","df[df == ""?""] = NA"
+"0",""
+"0","## Filter out only Massachusetts for analysis"
+"0","## Select the 2 relevant features"
+"0","## Drop NA data"
+"0","y_pre = df |> "
+"0","  filter(state %in% c(""MA"")) |> "
+"0","  dplyr::select(RentMedian, medIncome) |> "
+"0","  drop_na() "
+"0",""
+"0","## Log transform all features"
+"0","y = y_pre |> "
+"0","  mutate(RentMedian = log(RentMedian), "
+"0","         medIncome = log(medIncome)) |> "
+"0","  drop_na()"
+"0",""
+"0","## Standardize all columns (features)"
+"0","y = apply(y, 2, function(x) (x - mean(x))/sd(x))"
+"0",""
+"0","## y is fully processed at this point. Save to csv."
+"0","write.csv(y, ""data/cleaned_data_income_rent.csv"")"

@@ -1,0 +1,206 @@
+---
+title: "Summarize Gibbs Samples"
+format: pdf
+---
+
+```{r}
+source("helpers/helper_process_samples.R")
+source("helpers/helper_gibbs_tree_pruning_processing.R")
+library(coda)
+library(igraph)
+
+## Load MCMC samples
+load("saved_trajectories/gibbs_output.RData")
+
+## Read in cleaned dataset
+y_pre = read.csv("data/cleaned_data_income_rent.csv")
+
+## Drop the first column, which is just row index
+y = data.matrix(y_pre[,2:3])
+```
+
+```{r}
+
+## Setup all relevant params
+n = dim(y)[1]
+p = dim(y)[2]
+K = floor(n/4)
+
+niter = 5000
+burnin = 3500
+
+
+graphlist = list()
+
+## Read in all graphs, identify density of all MCMC samples
+for (i in (burnin+1):niter){
+  if ((i %% 10) == 0){
+    print(paste("At iteration", i))
+  }
+  spanning = res.gibbs$spanning[i,,]
+  z = res.gibbs$z[i,]
+  pi = res.gibbs$pi[i,]
+  mu = res.gibbs$mu[i,,]
+  Sigma = res.gibbs$Sigma[i,,]
+  g = reconstruct_graph_from_adjacency(spanning)
+  g = prune_tree(g, z, K)
+  graphlist[[i]] = g
+}
+
+used_samples = (burnin + 1):niter
+# density = density[used_samples]
+save(graphlist, file = "saved_trajectories/gibbs_graphlist.RData")
+```
+
+```{r}
+
+# load("saved_trajectories/gibbs_graphlist.RData")
+```
+
+
+
+```{r}
+
+get_depth_vec<-function(graphlist, max_depth = 10){
+  depth_vec =  matrix(rep(0, max_depth*length(graphlist)), max_depth, length(graphlist))
+  
+  for (i in 1:length(graphlist)){
+      g = graphlist[[i]]
+      depth_vec[1, i] = length(neighborhood(g,order=1,nodes=1,mode='out')[[1]])
+      for (j in 2:max_depth){
+        depth_vec[j, i] = length(neighborhood(g,order=j,nodes=1,mode='out')[[1]]) - length(neighborhood(g,order=j-1,nodes=1,mode='out')[[1]])
+      }
+  }
+  
+  depth_vec
+}
+
+actual_num_samples = niter - burnin
+max_depth = 10
+depth_vec = get_depth_vec(graphlist, max_depth = max_depth)
+weight_vec = 1.5^(-(1:max_depth) + 1)
+distance_mat = matrix(rep(0, niter*niter), niter, niter)
+
+for (i in (burnin + 1):niter){
+  for (j in (burnin + 1):niter){
+      if (i > j){
+        distance_mat[i, j] = sum(abs(depth_vec[,i] - depth_vec[,j])*weight_vec)
+        distance_mat[j, i] = distance_mat[i, j]
+      }
+  }
+}
+
+
+distance_mat_final = distance_mat[(burnin + 1):niter, (burnin + 1):niter]
+frechet_mean_ind = get_frechet_mean_index_new(distance_mat_final)
+frechet_mean_ind = frechet_mean_ind + burnin
+frechet_mean_graph = graphlist[[frechet_mean_ind]]
+  
+
+summary_graph_list = list("frechet mean" = frechet_mean_graph,
+                          "frechet index" = frechet_mean_ind)
+
+save(summary_graph_list, file = "saved_trajectories/gibbs_hpd_summary_graph_list.RData")
+```
+
+
+
+
+```{r}
+# actual_num_samples = niter - burnin
+# mean_path_lengths = get_mean_path_lengths(graphlist)
+# distance_mat = matrix(rep(0, niter*niter), niter, niter)
+# for (i in (burnin + 1):niter){
+#   for (j in (burnin + 1):niter){
+#       if (i > j){
+#         distance_mat[i, j] = abs(mean_path_lengths[i] - mean_path_lengths[j]) 
+#         distance_mat[j, i] = distance_mat[i, j]
+#       }
+#   }
+# }
+# 
+# distance_mat_final = distance_mat[(burnin + 1):niter, (burnin + 1):niter]
+# frechet_mean_ind = get_frechet_mean_index_new(distance_mat_final)
+# frechet_mean_ind = frechet_mean_ind + burnin
+# frechet_mean_graph = graphlist[[frechet_mean_ind]]
+#   
+# 
+# summary_graph_list = list("frechet mean" = frechet_mean_graph,
+#                           "frechet index" = frechet_mean_ind)
+# 
+# save(summary_graph_list, file = "saved_trajectories/gibbs_hpd_summary_graph_list.RData")
+```
+
+
+```{r}
+
+## older material below
+# ## Find HPD samples
+# num_samples_in_hpd = floor(length(used_samples) * percentile_cutoff)
+# sorted_indices = get_sorted_indices(density, num_samples_in_hpd)
+# 
+# ## Find Frechet Mean Graph to Summarize HPD Samples
+# distance_mat = get_distance_mat(graphlist, sorted_indices, num_samples_in_hpd)
+# save(distance_mat, file = "saved_trajectories/gibbs_distance_matrix.RData")
+# # load("saved_trajectories/gibbs_distance_matrix.RData")
+# 
+# ## fix here later
+# frechet_mean_ind = get_frechet_mean_index(distance_mat, sorted_indices, num_samples_in_hpd)
+# frechet_mean_ind = 1010
+# print(frechet_mean_ind)
+# frechet_mean_graph = graphlist[[frechet_mean_ind]]
+
+```
+
+
+```{r}
+# ## Find Max Nodes, Max Leaves, Min Nodes, Min Leaves trees
+# ## To show diversity in HPD samples
+# diverse_indices = find_diverse_tree_indices(graphlist, sorted_indices, num_samples_in_hpd)
+# print(diverse_indices)
+# max_node_graph = graphlist[[diverse_indices[1]]]
+# max_leaves_graph = graphlist[[diverse_indices[2]]]
+# min_node_graph = graphlist[[diverse_indices[3]]]
+# min_leaves_graph = graphlist[[diverse_indices[4]]]
+```
+ 
+ 
+```{r}
+# summary_graph_list = list("frechet mean" = frechet_mean_graph,
+#                           "max node" = max_node_graph, 
+#                           "max leaves" = max_leaves_graph,
+#                           "min node" = min_node_graph,
+#                           "min leaves" = min_leaves_graph, 
+#                           "frechet index" = frechet_mean_ind, 
+#                           "diverse indices" = diverse_indices)
+# save(summary_graph_list, file = "saved_trajectories/gibbs_hpd_summary_graph_list.RData")
+```
+
+```{r}
+pdf("images/hpd_summaries/frechet_mean_graph.pdf")
+plot_as_tree(frechet_mean_graph)
+dev.off()
+
+# pdf("images/hpd_summaries/max_node_graph.pdf")
+# plot_as_tree(max_node_graph)
+# dev.off()
+# 
+# pdf("images/hpd_summaries/max_leaves_graph.pdf")
+# plot_as_tree(max_leaves_graph)
+# dev.off()
+# 
+# pdf("images/hpd_summaries/min_node_graph.pdf")
+# plot_as_tree(min_node_graph)
+# dev.off()
+# 
+# pdf("images/hpd_summaries/min_leaves_graph.pdf")
+# plot_as_tree(min_leaves_graph)
+# dev.off()
+```
+
+
+
+```{r}
+plot_as_tree(frechet_mean_graph)
+```
+

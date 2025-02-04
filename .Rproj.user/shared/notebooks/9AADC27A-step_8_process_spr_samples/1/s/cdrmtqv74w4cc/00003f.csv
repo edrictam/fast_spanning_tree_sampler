@@ -1,0 +1,5 @@
+"0","## save trace, density and acf plots for tree related parameters"
+"0","image_save_prefix = ""images/spr/"""
+"0",""
+"0","pdf(paste(image_save_prefix, ""spr_deg_trace.pdf"", sep = """"))"
+"0","make.trace(chain.deg, ""maximum degree"")"

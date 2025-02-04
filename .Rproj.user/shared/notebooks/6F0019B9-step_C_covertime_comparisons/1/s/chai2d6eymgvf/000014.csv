@@ -1,0 +1,30 @@
+"0","colnames(wilson_df_c) = blocks
+cleaned_wilson_c <- wilson_df_c |> pivot_longer(cols = everything(), names_to = ""blocks"") |> 
+group_by(blocks) |> arrange(as.numeric(blocks))
+
+
+cleaned_aldous_c <- cleaned_aldous_c |> mutate(type = ""Aldous-Broder"")
+cleaned_fast_c <- cleaned_fast_c |> mutate(type = ""Fast-forwarded"")
+cleaned_wilson_c <- cleaned_wilson_c |> mutate(type = ""Wilson"")
+case_final_c <- rbind(cleaned_aldous_c, cleaned_fast_c, cleaned_wilson_c)
+
+
+# The palette with black:
+cbPalette <- c(""#0072B2"", ""#999999"", ""#D55E00"", ""#56B4E9"", ""#009E73"", ""#F0E442"", ""#E69F00"",  ""#CC79A7"")
+
+block_names = c(""2 blocks"", ""4 blocks"", ""8 blocks"", ""10 blocks"")
+case_final_c |> ggplot() +
+    geom_boxplot(aes(x=reorder(as.factor(blocks),as.numeric(blocks)), y=value/1e7, fill = type), outlier.shape = NA) +
+  labs(fill = ""Algorithm"") + 
+  xlab("""") + 
+  ylab(""Number of iterations"") + 
+  scale_x_discrete(labels = block_names) + 
+  theme_bw() + 
+  scale_fill_manual(values=cbPalette) + theme(legend.position = ""none"") + 
+  theme(text = element_text(size=20)) + 
+  ylim(-0.1, 0.9)
+
+
+ggsave(""images/computational_time/covertime_blocks.pdf"", height = 4)
+"
+"2","[38;5;232mSaving 5.44 x 4 in image[39m"

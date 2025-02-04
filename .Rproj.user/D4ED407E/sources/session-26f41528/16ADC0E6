@@ -1,0 +1,26 @@
+{
+    "id": "16ADC0E6",
+    "path": "~/Documents/Research/Exact Sampling Spanning Trees Revision /Current/helpers/helper_gibbs_tree_pruning_processing.R",
+    "project_path": "helpers/helper_gibbs_tree_pruning_processing.R",
+    "type": "r_source",
+    "hash": "364276900",
+    "contents": "",
+    "dirty": false,
+    "created": 1738663163337.0,
+    "source_on_save": false,
+    "relative_order": 18,
+    "properties": {
+        "source_window_id": "",
+        "Source": "Source",
+        "cursorPosition": "133,0",
+        "scrollLine": "124"
+    },
+    "folds": "",
+    "lastKnownWriteTime": 1738663251,
+    "encoding": "UTF-8",
+    "collab_server": "",
+    "source_window": "",
+    "last_content_update": 1738663251958,
+    "read_only": false,
+    "read_only_alternatives": []
+}

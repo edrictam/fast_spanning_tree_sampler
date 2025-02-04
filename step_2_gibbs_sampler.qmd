@@ -1,0 +1,43 @@
+---
+title: "Gibbs Sampler (Fast-Forwarded Cover Algorithm)"
+format: pdf
+---
+
+
+```{r}
+## Load all relevant functions
+source("helpers/gibbs_sampling_functions.R")
+
+## Set random seed
+set.seed(100)
+
+## Read in cleaned dataset
+y_pre = read.csv("data/cleaned_data_income_rent.csv")
+
+## Drop the first column, which is just row index
+y = data.matrix(y_pre[,2:3])
+```
+
+```{r}
+## Run the Gibbs sampler
+
+## Get the dimensions of the data
+n = dim(y)[1]
+p = dim(y)[2]
+
+## In the absence of knowledge on K, take overfitted approach and set K as n/4
+K = floor(n/4)  
+
+## Inverse Wishart prior hyperparameters for Sigma
+nu = n
+Sigma_0 = 0.2^2*diag(p)
+delta = 1/4
+
+## Main Gibbs Sampler function
+res.gibbs = gibbs_new(y, K, niter = 5000, nu, Sigma_0, delta)
+
+## Save Gibbs Output
+save(res.gibbs, file = "saved_trajectories/gibbs_output.RData")
+```
+
+

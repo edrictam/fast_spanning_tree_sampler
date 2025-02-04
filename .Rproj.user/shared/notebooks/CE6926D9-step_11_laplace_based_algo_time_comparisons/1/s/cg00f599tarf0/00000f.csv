@@ -1,0 +1,6 @@
+"0","sourceCpp('helpers/fastcover/fastcover_older_version.cpp')
+"
+"2","Error: unexpected string constant in:
+""
+sourceCpp('""
+"

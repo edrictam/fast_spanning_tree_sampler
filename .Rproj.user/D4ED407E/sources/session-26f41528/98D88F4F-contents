@@ -1,0 +1,38 @@
+---
+title: "Process Data"
+format: pdf
+---
+
+```{r}
+library(tidyverse)
+
+## Read in relevant crimes and communities dataset
+
+df = read.csv("data/crimedata.csv")
+
+## Replace empty data with "?" entries to NA
+df[df == "?"] = NA
+
+## Filter out only Massachusetts for analysis
+## Select the 2 relevant features
+## Drop NA data
+y_pre = df |> 
+  filter(state %in% c("MA")) |> 
+  dplyr::select(RentMedian, medIncome) |> 
+  drop_na() 
+
+## Log transform all features
+y = y_pre |> 
+  mutate(RentMedian = log(RentMedian), 
+         medIncome = log(medIncome)) |> 
+  drop_na()
+
+## Standardize all columns (features)
+y = apply(y, 2, function(x) (x - mean(x))/sd(x))
+
+## y is fully processed at this point. Save to csv.
+write.csv(y, "data/cleaned_data_income_rent.csv")
+```
+
+
+

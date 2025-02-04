@@ -1,0 +1,187 @@
+```{r}
+ 
+library(Rcpp)
+library(RcppArmadillo)
+library(igraph)
+library(MASS)
+library(tidyverse)
+
+## Load fastcover cpp tree sampler
+sourceCpp("helpers/fastcover/fastcover_older_version.cpp")
+sourceCpp("helpers/fastcover/laplacian.cpp")
+sourceCpp("helpers/fastcover/wilson.cpp")
+
+```
+
+```{r}
+num_vert = 3
+A_1<- matrix(rep(1, num_vert*num_vert), num_vert, num_vert)
+A_2<- matrix(rep(1, num_vert*num_vert), num_vert, num_vert)
+
+A <- matrix(0, 2*num_vert, 2*num_vert)
+A[1:num_vert, 1:num_vert] <- A_1
+A[(num_vert + 1):(2*num_vert), (num_vert + 1):(2*num_vert)] <- A_2
+diag(A) <- 0
+
+edge1 = c(num_vert, num_vert + 1)
+edge2 = c(num_vert %/% 2, num_vert + num_vert %/% 2)
+
+## Bottleneck edge 
+A[edge1[1], edge1[2]] <- 1
+A[edge1[2], edge1[1]] <- 1
+
+## Bottleneck edge 
+A[edge2[1], edge2[2]] <- 1
+A[edge2[2], edge2[1]] <- 1
+print(A)
+chain(A)
+```
+
+
+```{r}
+## Generate graph with bottle neck 
+
+num_vert = 10
+A_1<- matrix(rep(1, num_vert*num_vert), num_vert, num_vert)
+A_2<- matrix(rep(1, num_vert*num_vert), num_vert, num_vert)
+
+A <- matrix(0, 2*num_vert, 2*num_vert)
+A[1:num_vert, 1:num_vert] <- A_1
+A[(num_vert + 1):(2*num_vert), (num_vert + 1):(2*num_vert)] <- A_2
+diag(A) <- 0
+
+edge1 = c(num_vert, num_vert + 1)
+edge2 = c(num_vert %/% 2, num_vert + num_vert %/% 2)
+
+## Bottleneck edge 
+A[edge1[1], edge1[2]] <- 1
+A[edge1[2], edge1[1]] <- 1
+
+## Bottleneck edge 
+A[edge2[1], edge2[2]] <- 1
+A[edge2[2], edge2[1]] <- 1
+```
+
+
+``` {r}
+## Check Sampling
+set.seed(100)
+
+N = 500
+reps = 1000
+
+chain.edge1.list = base::rep(0, reps)
+chain.edge2.list = base::rep(0, reps)
+
+normal.edge1.list = base::rep(0, reps)
+normal.edge2.list = base::rep(0, reps)
+
+for (j in 1:reps) {
+  if ((j %% 50) == 0) {
+    print("progress at ")
+    print(j/reps)
+  }
+  chain.edge1 = 0
+  chain.edge2 = 0
+
+  normal.edge1 = 0
+  normal.edge2 = 0
+
+  degrees = colSums(A)[1:10]
+  normalize = sum(degrees)
+  prob = degrees/normalize
+
+  ## accel loop
+  for (i in 1:N){
+    init = 0
+    a1 <- chain(A)
+    if (a1[edge1[1], edge1[2]] == 1){
+      chain.edge1 = chain.edge1 + 1
+    }
+    if (a1[edge2[1], edge2[2]] == 1){
+      chain.edge2 = chain.edge2 + 1
+    }
+  }
+
+  ## normal loop
+  for (i in 1:N){
+    init = 1 # which(rmultinom(1, 1, prob) > 0)
+    a2<- wilson(A,  init)
+    if (a2[edge1[1], edge1[2]] == 1){
+      normal.edge1 = normal.edge1 + 1
+    }
+    if (a2[edge2[1], edge2[2]] == 1){
+      normal.edge2 = normal.edge2 + 1
+    }
+  }
+
+  chain.edge1.list[j] = chain.edge1
+  chain.edge2.list[j] = chain.edge2
+
+  normal.edge1.list[j] = normal.edge1
+  normal.edge2.list[j] = normal.edge2
+
+  print(j)
+}
+```
+```{r}
+D = diag(colSums(A))
+L = D - A
+L_inv = ginv(L)
+# L_inv
+
+get_marginal_probability <- function(u, v, L_inv, A){
+  w = A[u, v]
+  n = dim(A)[1]
+  chi_uv = base::rep(0, n)
+  chi_uv[u] = 1
+  chi_uv[v] = -1
+  effective_resistance = t(chi_uv) %*% L_inv %*% chi_uv
+  marginal_probability = effective_resistance * w
+  marginal_probability
+}
+```
+
+Test against exact marginal inclusion
+
+```{r}
+edge1 = c(num_vert, num_vert + 1)
+edge2 = c(num_vert %/% 2, num_vert + num_vert %/% 2)
+edge_1_exact_p = get_marginal_probability(edge1[1], edge1[2], L_inv, A)
+edge_2_exact_p = get_marginal_probability(edge2[1], edge2[2], L_inv, A)
+print(edge_1_exact_p)
+print(edge_2_exact_p)
+
+```
+
+```{r}
+p.1 = get_marginal_probability(edge1[1], edge1[2], L_inv, A)
+
+data.normal <- data.frame(x= normal.edge1.list)
+
+#create histogram and overlay normal curve
+ggplot(data.normal, aes(x)) +
+  geom_histogram(aes(y = ..density..), fill='lightgray', col='black') +
+  stat_function(fun = dnorm, args = list(mean= N*p.1, sd= sqrt(N*p.1*(1-p.1)))) + 
+  xlim(N*p.1 -N/10 , N*p.1 +N/10 ) + 
+  geom_vline(xintercept=N*p.1, color = "red") +
+  ggtitle("Histogram of bottleneck edge inclusion for aldous-broder algorithm") + 
+  xlab("Counts of edge inclusion out of 1000 generated trees")
+
+
+#overlay accel curve on histogram
+data.chain <- data.frame(x= chain.edge1.list)
+
+#create histogram and overlay accel curve
+ggplot(data.chain, aes(x)) +
+  geom_histogram(aes(y = ..density..), fill='lightgray', col='black') +
+  stat_function(fun = dnorm, args = list(mean= N*p.1, sd= sqrt(N*p.1*(1-p.1)))) +
+  xlim(N*p.1 -N/10 , N*p.1 +N/10 ) + 
+  geom_vline(xintercept=N*p.1, color = "red") +
+  ggtitle("Histogram of bottleneck edge inclusion for fast-forwarded algorithm") + 
+  xlab("Counts of edge inclusion out of 1000 generated trees")
+
+
+
+```
+

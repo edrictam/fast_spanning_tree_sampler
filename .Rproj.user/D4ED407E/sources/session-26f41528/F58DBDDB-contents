@@ -1,0 +1,71 @@
+## Helper functions
+
+## Given a vector, normalize entries so it sums to 1. 
+## Unless the vector sums to 0, in which case we return a vector of 0s. 
+normalize = function(x){
+  s = sum(x)
+  if (s != 0){
+    return(x/s)
+  }
+  return(rep(0, length(x))) 
+}
+
+## Note: For all these tree functions, igraph take in either the internal vertex
+## id or the external name as arguments...it is extremely easy to get them tangled
+## up. For consistency, we will always assume that any vertex being passed to the
+## helper functions that we write is referenced by *name*, and when we output, 
+## we try to output data structures/vertex sequences that contains *both the name
+## and internal vertex id*, and the user would have to extract the names by using 
+## $name. 
+
+## another side note is that even though igraph will print out a vertex sequence 
+## by name, when you do v_name %in% vertex_sequence, the %in% operator is actually
+## checking for matches in the internal vertex id, NOT the vertex names...
+## the right way is v_name %in% vertex_sequence$name. 
+
+#get all nodes on the tree
+getTreeNodes<- function(g, K_tilde){
+  neighborhood(g,order=K_tilde,nodes="1",mode='out')[[1]]
+}
+
+#get all child nodes for node v 
+getChildren<- function(g,v){
+  neighbors(g,as.character(v),mode='out')
+}
+
+#check if a node v (v is a vertex name) is in the tree and a leaf
+isLeaf<- function(g, v, K_tilde){
+  allNodes<- getTreeNodes(g, K_tilde)
+  isInTree<- as.character(v)%in%allNodes$name
+  if (isInTree){
+    return(length(getChildren(g,as.character(v)))==0)
+  }
+  return(FALSE)
+}
+
+
+# get all the nodes in the tree that are empty (no data points associated)
+# return nodes' names...need to turn back to character before use
+get_empty_nodes <- function(z, K){
+  K_tilde = K + 1
+  df = as.data.frame(table(z))
+  empty_nodes = setdiff(1:K_tilde, df$z)
+  empty_nodes
+}
+
+## get all the empty leaves in the tree
+# return nodes' names...need to turn back to character before use
+emptyleaves <- function(g, z, K){
+  empty_leaves = c()
+  ## these are the vertex "names" since they
+  ## are the actual index k's that we are referring to
+  empty_nodes = get_empty_nodes(z, K) 
+  for (node in empty_nodes){
+    if (isLeaf(g, as.character(node), K + 1)){
+      empty_leaves = c(empty_leaves, node)
+    }
+  }
+  return(empty_leaves)
+}
+
+

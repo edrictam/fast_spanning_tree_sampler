@@ -1,0 +1,488 @@
+---
+title: "Visualize posterior similarity matrices and maps"
+format: pdf
+---
+
+```{r}
+library(igraph)
+library(tidyverse)
+library(ggraph)
+library(RColorBrewer) 
+
+# define jet colormap
+jet.colors <- colorRampPalette(c("#00007F", "blue", "#007FFF", "cyan", "#7FFF7F", "yellow", "#FF7F00", "red", "#7F0000"))
+ 
+source("helpers/helper_gibbs_tree_pruning_processing.R")
+
+## Load MCMC samples
+load("saved_trajectories/gibbs_output.RData")
+```
+
+```{r}
+## obtain data (same as step 1 qmd file), with the goal of getting the community names
+df = read.csv("data/crimedata.csv")
+
+df[df == "?"] = NA
+
+df = df |> 
+  filter(state %in% c("MA")) |> 
+  dplyr::select(RentMedian, medIncome, communityname) |> 
+  drop_na() |> 
+  dplyr::select(communityname)
+
+town_removed = strsplit(df$communityname, split = "town")
+
+for (i in 1:nrow(df)){
+  df$communityname[i] = town_removed[[i]][1]
+}
+
+city_removed = strsplit(df$communityname , split = "city")
+for (i in 1:nrow(df)){
+  df$communityname[i] = city_removed[[i]][1]
+}
+
+spaced = strsplit(df$communityname, "(?<=[a-z])(?=[A-Z])", perl = TRUE)
+for (i in 1:nrow(df)){
+  if (length(spaced[[i]]) == 1){
+    df$communityname[i] = spaced[[i]]
+  } else{ ## only two words separated in this dataset
+    df$communityname[i] = paste(spaced[[i]][1], spaced[[i]][2])
+  }
+  
+}
+```
+
+
+
+```{r}
+# define some helper functions
+find_descendants = function(v, group_df, g, max_depth = 100){
+  descendants = neighborhood(g,order=max_depth,nodes=v,mode='out')[[1]]
+  descendants
+}
+
+find_ancestors = function(v, group_df, g, max_depth = 100){
+  ancestors = neighborhood(g,order=max_depth,nodes=v,mode='in')[[1]]
+  ancestors
+}
+```
+
+
+```{r}
+load("saved_trajectories/gibbs_graphlist.RData")
+
+## Read in cleaned dataset
+y_pre = read.csv("data/cleaned_data_income_rent.csv")
+
+## Drop the first column, which is just row index
+y = data.matrix(y_pre[,2:3])
+y = as.data.frame(y)
+
+
+## Obtain graphs from MCMC
+## Generate a heatmap of depth 1 clusters
+start = 3501
+ending = 5000
+thinning = 10
+desired_depth = 1
+
+Z = matrix(rep(0, nrow(y)^2), nrow(y), nrow(y))
+
+for (index in seq(start, ending, thinning)){
+  if (index %% 100 == 1){
+      print("graph at ")
+      print(index)
+  }
+  z = res.gibbs$z[index,]
+  g = graphlist[[index]]
+  yy = y |> mutate(names = df$communityname, group = as.factor(z))
+  
+  groups = levels(as.data.frame(table(yy$group))[,1])
+  group_depth = rep(0, length(groups))
+  
+  for (i in 1:length(groups)){
+    grp = groups[i]
+    group_depth[i] = length(shortest_paths(g, "1", grp)$vpath[[1]])-1
+  }
+  
+  group_df = as.data.frame(cbind(groups, group_depth))
+  
+  yy = yy |> inner_join(group_df, by = c("group" = "groups"))
+  ancestor_list = list()
+  for (lev in levels(as.factor(z))){
+    ancestors = find_ancestors(lev, group_df, g)
+    node_depth = length(ancestors) - 1
+    if (node_depth > desired_depth){
+      ancestor_list[[lev]] = ancestors$name[node_depth - desired_depth + 1]
+    }  else {
+      ancestor_list[[lev]] = -1
+    }
+  }
+  for (i in 1:nrow(y)){
+    for (j in 1:nrow(y)){
+      if (i > j){
+        if ((ancestor_list[[as.character(z[i])]] > 0) && (ancestor_list[[as.character(z[i])]] == ancestor_list[[as.character(z[j])]])) {
+                  Z[i, j] = Z[i, j] + 1
+                  Z[j, i] = Z[i, j]
+        }
+      }
+    }
+  }
+}
+
+ZZ = Z/length(seq(start, ending, thinning))
+diag(ZZ) = max(ZZ)
+
+# heatmap corresponding to a depth 1 cluster
+heatmap_df = expand.grid(X = 1:length(z), Y = 1:length(z))
+heatmap_df$ZZ = as.numeric(ZZ)
+ggplot(heatmap_df) + geom_tile(aes(X, Y, fill = ZZ)) + 
+  scale_fill_gradientn(colors = jet.colors(7))
+
+```
+
+
+```{r}
+
+## find an appropriate ordering to show things...this ordering is kept throughout
+library(biclust)
+set.seed(1)
+res1 = spectral(ZZ,  normalization="log", numberOfEigenvalues=15,
+                minr=5, minc=5, withinVar=1, n_clusters = NULL, n_best = 15)
+
+heatmap_df = expand.grid(X = 1:length(z), Y = 1:length(z))
+heatmap_df$ZZ = as.numeric(ZZ[order(res1@info$row_labels), order(res1@info$row_labels)])
+
+ggplot(heatmap_df) + geom_tile(aes(X, Y, fill = ZZ)) + 
+  scale_fill_gradientn(colors = jet.colors(7),  name = NULL) + 
+xlab("Communities") + ylab("Communities")
+```
+
+
+
+```{r}
+
+## Obtain graphs from MCMC
+## depth 2 cluster heatmap
+start = 3501
+ending = 5000
+thinning = 10
+desired_depth = 2
+
+
+Z2 = matrix(rep(0, nrow(y)^2), nrow(y), nrow(y))
+
+for (index in seq(start, ending, thinning)){
+  if (index %% 1000 == 1){
+      print("graph at ")
+      print(index)
+  }
+  z = res.gibbs$z[index,]
+  g = graphlist[[index]]
+  yy = y |> mutate(names = df$communityname, group = as.factor(z))
+  
+  groups = levels(as.data.frame(table(yy$group))[,1])
+  group_depth = rep(0, length(groups))
+  
+  for (i in 1:length(groups)){
+    grp = groups[i]
+    group_depth[i] = length(shortest_paths(g, "1", grp)$vpath[[1]])-1
+  }
+  
+  group_df = as.data.frame(cbind(groups, group_depth))
+  
+  yy = yy |> inner_join(group_df, by = c("group" = "groups"))
+  ancestor_list = list()
+  for (lev in levels(as.factor(z))){
+    ancestors = find_ancestors(lev, group_df, g)
+    node_depth = length(ancestors) - 1
+    if (node_depth > desired_depth){
+      ancestor_list[[lev]] = ancestors$name[node_depth - desired_depth + 1]
+    }  else {
+      ancestor_list[[lev]] = -1
+    }
+  }
+  for (i in 1:length(z)){
+    for (j in 1:length(z)){
+      if (i > j){
+        if ((ancestor_list[[as.character(z[i])]] > 0) && (ancestor_list[[as.character(z[i])]] == ancestor_list[[as.character(z[j])]])) {
+                  Z2[i, j] = Z2[i, j] + 1
+                  Z2[j, i] = Z2[i, j]
+        }
+      }
+    }
+  }
+}
+
+ZZ2 = Z2/length(seq(start, ending, thinning))
+diag(ZZ2) = max(ZZ2)
+```
+
+```{r}
+## Heatmap of depth 2 clusters 
+sub_ind = 1:123
+set.seed(1)
+
+heatmap_df = expand.grid(X = 1:length(sub_ind), Y = 1:length(sub_ind))
+heatmap_df$ZZ2 = as.numeric(ZZ2[sub_ind,sub_ind][order(res1@info$row_labels), order(res1@info$row_labels)])
+
+ggplot(heatmap_df) + geom_tile(aes(X, Y, fill = ZZ2)) + 
+  scale_fill_gradientn(colors = jet.colors(7),  name = NULL) + 
+xlab("Communities") + ylab("Communities")
+
+```
+
+```{r}
+## Obtain graphs from MCMC
+## depth 3 cluster heatmap
+start = 3501
+ending = 5000
+thinning = 10
+desired_depth = 3
+
+Z3 = matrix(rep(0, nrow(y)^2), nrow(y), nrow(y))
+
+for (index in seq(start, ending, thinning)){
+  if (index %% 1000 == 1){
+      print("graph at ")
+      print(index)
+  }
+  z = res.gibbs$z[index,]
+  g = graphlist[[index]]
+  yy = y |> mutate(names = df$communityname, group = as.factor(z))
+  
+  groups = levels(as.data.frame(table(yy$group))[,1])
+  group_depth = rep(0, length(groups))
+  
+  for (i in 1:length(groups)){
+    grp = groups[i]
+    group_depth[i] = length(shortest_paths(g, "1", grp)$vpath[[1]])-1
+  }
+  
+  group_df = as.data.frame(cbind(groups, group_depth))
+  
+  yy = yy |> inner_join(group_df, by = c("group" = "groups"))
+  ancestor_list = list()
+  for (lev in levels(as.factor(z))){
+    ancestors = find_ancestors(lev, group_df, g)
+    node_depth = length(ancestors) - 1
+    if (node_depth > desired_depth){
+      ancestor_list[[lev]] = ancestors$name[node_depth - desired_depth + 1]
+    }  else {
+      ancestor_list[[lev]] = -1
+    }
+  }
+  for (i in 1:length(z)){
+    for (j in 1:length(z)){
+      if (i > j){
+        if ((ancestor_list[[as.character(z[i])]] > 0) && (ancestor_list[[as.character(z[i])]] == ancestor_list[[as.character(z[j])]])) {
+                  Z3[i, j] = Z3[i, j] + 1
+                  Z3[j, i] = Z3[i, j]
+        }
+      }
+    }
+  }
+}
+
+ZZ3 = Z3/length(seq(start, ending, thinning))
+diag(ZZ3) = max(ZZ3)
+
+```
+
+```{r}
+
+## depth 3 cluster heatmap
+sub_ind2 = 1:123
+set.seed(1)
+
+heatmap_df = expand.grid(X = 1:length(sub_ind2), Y = 1:length(sub_ind2))
+heatmap_df$ZZ3 = as.numeric(ZZ3[sub_ind2, sub_ind2][order(res1@info$row_labels), order(res1@info$row_labels)])
+
+ggplot(heatmap_df) + geom_tile(aes(X, Y, fill = ZZ3)) +
+  scale_fill_gradientn(colors = jet.colors(7) , name = NULL) +
+xlab("Communities") + ylab("Communities")
+```
+
+```{r}
+
+## save these heatmaps into images below
+heatmap_df = expand.grid(X = 1:length(z), Y = 1:length(z))
+heatmap_df$ZZ = as.numeric(ZZ[order(res1@info$row_labels), order(res1@info$row_labels)])
+
+ggplot(heatmap_df) + geom_tile(aes(X, Y, fill = ZZ)) + 
+  scale_fill_gradientn(colors = jet.colors(7),  name = NULL) + 
+xlab("Communities") + ylab("Communities") + theme(panel.background = element_blank(), 
+                                                  axis.ticks.x=element_blank(),
+                                                  axis.text.x=element_blank(),
+                                                  axis.ticks.y=element_blank(),
+                                                  axis.text.y=element_blank())
+ggsave("images/hpd_summaries/clustered_heatmap.pdf", height = 4)
+```
+
+```{r}
+## save these heatmaps into images below
+sub_ind = 1:123
+heatmap_df = expand.grid(X = 1:length(sub_ind), Y = 1:length(sub_ind))
+heatmap_df$ZZ2 = as.numeric(ZZ2[order(res1@info$row_labels), order(res1@info$row_labels)][sub_ind, sub_ind])
+
+ggplot(heatmap_df) + geom_tile(aes(X, Y, fill = ZZ2)) + 
+  scale_fill_gradientn(colors = jet.colors(7),  name = NULL) + 
+xlab("Communities") + ylab("Communities") + theme(panel.background = element_blank(), 
+                                                  axis.ticks.x=element_blank(),
+                                                  axis.text.x=element_blank(),
+                                                  axis.ticks.y=element_blank(),
+                                                  axis.text.y=element_blank())
+ggsave("images/hpd_summaries/clustered_heatmap_sub1.pdf", height = 4)
+```
+
+```{r}
+## save these heatmaps into images below
+sub_ind2 = 1:123
+heatmap_df = expand.grid(X = 1:length(sub_ind2), Y = 1:length(sub_ind2))
+heatmap_df$ZZ3 = as.numeric(ZZ3[order(res1@info$row_labels), order(res1@info$row_labels)][sub_ind2, sub_ind2])
+
+ggplot(heatmap_df) + geom_tile(aes(X, Y, fill = ZZ3)) + 
+  scale_fill_gradientn(colors = jet.colors(7),  name = NULL) + 
+xlab("Communities") + ylab("Communities") + theme(panel.background = element_blank(), 
+                                                  axis.ticks.x=element_blank(),
+                                                  axis.text.x=element_blank(),
+                                                  axis.ticks.y=element_blank(),
+                                                  axis.text.y=element_blank())
+ggsave("images/hpd_summaries/clustered_heatmap_sub2.pdf", height = 4)
+```
+
+
+```{r}
+
+## Goal is to make maps below (spatial map of MA counties)
+library(igraph)
+library(tidyverse)
+library(ggraph)
+library(RColorBrewer) 
+
+## obtain data (same as step 1 qmd file), with the goal of getting the community 
+## names
+df = read.csv("data/crimedata.csv")
+ 
+df[df == "?"] = NA
+
+df = df |> 
+  filter(state %in% c("MA")) |> 
+  dplyr::select(RentMedian, medIncome, communityname) |> 
+  drop_na() |> 
+  dplyr::select(communityname)
+
+town_removed = strsplit(df$communityname, split = "town")
+ 
+for (i in 1:nrow(df)){
+  df$communityname[i] = town_removed[[i]][1]
+}
+
+city_removed = strsplit(df$communityname , split = "city")
+for (i in 1:nrow(df)){
+  df$communityname[i] = city_removed[[i]][1]
+}
+
+spaced = strsplit(df$communityname, "(?<=[a-z])(?=[A-Z])", perl = TRUE)
+for (i in 1:nrow(df)){
+  if (length(spaced[[i]]) == 1){
+      df$communityname[i] = spaced[[i]]
+  } else{ ## only two words separated in this dataset
+      df$communityname[i] = paste(spaced[[i]][1], spaced[[i]][2])
+  }
+
+}
+
+```
+
+```{r}
+library(ggplot2)
+library(sf)
+
+ma <- st_read("data/maps/TOWNSSURVEY_POLYM.shp", quiet = TRUE)
+
+
+data_communities <- df|> mutate(communityname = toupper(communityname))
+
+ma <- ma |> mutate(in_data = ifelse(TOWN %in% data_communities$communityname, 1, 0))
+ma |>
+ggplot() +
+  geom_sf(aes(fill = as.factor(in_data), alpha = as.factor(in_data))) +
+  labs(title = "MA Townships") + 
+  scale_alpha_discrete(range = c(0.1, 1))
+
+
+```
+
+```{r}
+
+## Plot map colored by cluster results
+data_communities <- df|> mutate(communityname = toupper(communityname))
+
+sub_inds = 63:124
+sub_ordering = order(res1@info$row_labels)[sub_inds]
+grouped_communities = sub_ordering
+
+grouping = rep(0, length(z))
+for(i in 1:length(z)){
+  grouping[i] = ifelse(i %in% grouped_communities, "1", "0")
+}
+
+group_factor = as.factor(grouping)
+levels(group_factor) = c("Cluster 1", "Not Cluster 1")
+data_communities$grouping = group_factor
+ma_joined = left_join(ma, data_communities, by = join_by("TOWN" == "communityname")) 
+
+
+
+ma_joined |>
+ggplot() +
+  geom_sf(aes(fill = grouping, alpha = as.factor(in_data))) +
+  labs(title = "Massachusetts townships") +
+  scale_alpha_discrete(range = c(0.1, 1)) +
+  scale_fill_discrete(name = "Cluster", na.translate = F) + 
+ guides(alpha = FALSE) 
+ggsave("images/hpd_summaries/clustered_map_level_1.pdf", height = 4)
+
+```
+
+```{r}
+## Plot map with color based on rent level
+## Read in  dataset
+income_data = read.csv("data/crimedata.csv")
+
+## Replace empty data with "?" entries to NA
+income_data[income_data == "?"] = NA
+
+## Filter out only Massachusetts for analysis
+## Select only 4 relevant features
+## Drop NA data
+income_data = income_data |> 
+  filter(state %in% c("MA")) |> 
+  dplyr::select(RentMedian, medIncome) |> 
+  drop_na()
+
+data_communities$RentMedian = income_data$RentMedian
+data_communities$IncomeMedian = income_data$medIncome
+ma_joined = left_join(ma, data_communities, by = join_by("TOWN" == "communityname"))
+
+ma_joined |>
+ggplot() +
+  geom_sf(aes(fill = IncomeMedian, alpha = as.factor(in_data))) +
+  labs(title = "MA Townships") + 
+  scale_alpha_discrete(range = c(0.1, 1)) + 
+  scale_fill_gradient(low = "yellow", high = "purple")
+
+
+ma_joined |>
+ggplot() +
+  geom_sf(aes(fill = as.factor(ifelse(RentMedian > 550, 1, 0)), alpha = as.factor(in_data))) +
+  labs(title = "Massachusetts Townships") + 
+  scale_alpha_discrete(range = c(0.1, 1), ) + guides(alpha = FALSE) +
+  scale_fill_discrete(name = "Median rent >\n $550", na.translate = F)
+
+ggsave("images/hpd_summaries/clustered_map_rent.pdf", height = 4)
+```
+
+
+

@@ -1,0 +1,156 @@
+#include "RcppArmadillo.h"
+#include <unordered_map>
+#include <vector>
+
+using namespace Rcpp;
+using namespace arma;
+using namespace std;
+
+// [[Rcpp::export]]
+double sample_uniform() {
+  return R::runif(0, 1);
+}
+
+// This function contracts an edge by merging v into u (deleting v)
+// [[Rcpp::depends(RcppArmadillo)]]
+// [[Rcpp::export]]
+arma::mat contract_edge(const arma::mat&W, int u, int v) {
+  int n = W.n_rows;
+  arma::mat newW = W;
+  
+  // Merge node v into node u
+  for (int i = 0; i < n; i++) {
+    if (i != u && i != v) {
+      newW(u, i) += newW(v, i);
+      newW(i, u) += newW(i, v);
+    }
+  }
+  
+  // Remove any self-loops
+  newW(u, u) = 0;
+  
+  newW.shed_row(v);
+  newW.shed_col(v);
+  
+  return newW;
+}
+
+// [[Rcpp::depends(RcppArmadillo)]]
+// [[Rcpp::export]]
+arma::mat delete_edge(const arma::mat&W, int u, int v) {
+  arma::mat newW = W;
+  if (u == v) {
+    return newW;
+  }
+  newW(u, v) -= 1;
+  newW(v, u) -= 1;
+  return newW; 
+}
+
+// [[Rcpp::depends(RcppArmadillo)]]
+// [[Rcpp::export]]
+arma::mat compute_Laplacian(const arma::mat&W) {
+  // Compute the degree matrix
+  arma::mat D = diagmat(sum(W, 1));
+  
+  // Compute the Laplacian matrix
+  arma::mat L = D - W;
+  
+  return L;
+}
+
+// this struct encodes an edge
+struct Edge {
+  int row;
+  int col;
+  double value;
+};
+
+// find all edges in a graph adjacency matrix
+vector<Edge> findEdges(const mat &matrix) {
+  vector<Edge> nonZeroEntries;
+  int n = matrix.n_rows;
+  
+  for (int i = 0; i < n; ++i) {
+    for (int j = i + 1; j < n; ++j) {
+      if (matrix(i, j) != 0) {
+        nonZeroEntries.push_back({i, j, matrix(i, j)});
+      }
+    }
+  }
+  return nonZeroEntries;
+}
+
+// This function implements the Chain Rule algorithm
+// [[Rcpp::depends(RcppArmadillo)]]
+// [[Rcpp::export]]
+arma::mat chain(const arma::mat&W) {
+  // initialize variables
+  int n = W.n_rows;
+  int curr_dim = n;
+  double R_eff = 0; 
+  arma::mat current_adjacency = W;
+  arma::mat current_Laplacian = compute_Laplacian(W);
+  arma::mat A(n, n, arma::fill::zeros);
+  
+  // set up a dictionary to keep track of indices after contraction of edges
+  unordered_map<int, int> dictionary;
+  for (int i = 0; i < n; i ++) {
+    dictionary[i] = i;
+  }
+  
+  int u;
+  int v; 
+  vector<Edge> edges = findEdges(W);
+  
+  // loop through the edges
+  for (Edge edge:edges){
+    arma::vec indicator(curr_dim, fill::zeros);
+    u = dictionary[edge.row];
+    v = dictionary[edge.col];
+    
+    if (u == v) {
+      continue;
+    }
+    // create current vector
+    indicator[u] = 1;
+    indicator[v] = -1;
+    
+    // compute effective resistance with the Laplacian pseudoinverse 
+    R_eff = as_scalar(indicator.t() * pinv(current_Laplacian) * indicator);
+    // sample an edge
+    if (sample_uniform() < R_eff) {
+      // if edge sampled, add to spanning tree
+      A(edge.row, edge.col) = 1;
+      A(edge.col, edge.row) = 1;
+      
+      // contract an edge (merging v to u)
+      current_adjacency = contract_edge(current_adjacency, u, v);
+      
+      for (int q = 0; q < n; q ++) {
+        if (dictionary[q] == v) {
+          dictionary[q] = u;
+        } 
+      }
+      
+      // decrement indices larger than v by 1
+      for (int q = 0; q < n; q ++) {
+        if (dictionary[q] > v){
+          dictionary[q] -= 1;
+        } 
+      }
+      // update Laplacians
+      current_Laplacian = compute_Laplacian(current_adjacency);
+      curr_dim = current_adjacency.n_rows;
+    } else {
+      current_adjacency = delete_edge(current_adjacency, u , v);
+      curr_dim = current_adjacency.n_rows;
+      current_Laplacian = compute_Laplacian(current_adjacency);
+    }
+    if (current_adjacency.n_rows == 1) {
+      break;
+    }
+  }
+  return A;
+}
+

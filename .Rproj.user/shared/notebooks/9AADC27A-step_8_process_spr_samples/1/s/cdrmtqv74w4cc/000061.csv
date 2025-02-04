@@ -1,0 +1,8 @@
+"0","dev.off()"
+"1","null device "
+"1","
+"
+"1","          1 "
+"1","
+"
+"0","pdf(paste(image_save_prefix, ""spr_leaves_trace.pdf"", sep = """"))"

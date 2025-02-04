@@ -1,0 +1,307 @@
+---
+title: "Reversible Jump Subtree Prune and Regraft MCMC (Competitor)"
+format: pdf
+---
+
+```{r}
+## Load all relevant functions
+# source("helpers/subtree_prune_regraft_sampling_functions.R")
+
+## Set random seed
+set.seed(100)
+
+## Read in cleaned dataset
+y_pre = read.csv("data/cleaned_data_income_rent.csv")
+
+## Drop the first column, which is just row index
+y = data.matrix(y_pre[,2:3])
+```
+
+
+```{r}
+## Gibbs Sampler Full Conditionals
+library(gtools)
+library(mvtnorm)
+library(invgamma)
+library(LaplacesDemon)
+library(igraph)
+
+source("helpers/helper.R")
+
+## note that other than the SPR tree sampling step, we share other steps
+## with the RJMCMC sampler, hence the functions for sampling z, mu etc are 
+## identital with the RJMCMC sampler, with the main difference in the code below
+## being only the part that samples T using SPR
+
+evaluate_density = function(mu, Sigma, y, pi, z, delta, edge_list, K, nu, Sigma_0, conc = 0.1){
+  n = dim(y)[1]
+  p = dim(y)[2]
+  K_tilde = K + 1
+  
+  logL = 0
+  eps = 1e-30
+
+  for (i in 1:n){
+    logL = logL + log(dmvnorm(y[i,], mu[z[i], ], Sigma))
+    logL = logL + log(pi[z[i]] + eps) 
+  }
+
+  logL = logL + log(dinvwishart(Sigma, nu, Sigma_0))
+  logL = logL +  ddirichlet(pi[2:K_tilde], rep(conc, K), log = TRUE)
+
+  ## edgelist is E x 2 matrix, with left being source and right being sink node
+  num_edge = dim(edge_list)[1]
+  for (q in 1:num_edge){
+    logL = logL + log(dmvnorm(mu[edge_list[q,2],], mu[edge_list[q,1],], diag(p)/delta))
+  }
+  
+  logL
+}
+
+## T sampler subtree prune regraft
+sample_T_spr = function(g, mu, Sigma, y, pi, z, delta, K, nu, Sigma_0, conc = 0.1){
+
+  current_tree <- g
+
+
+  # Randomly select a node to prune (excluding root)
+  nodes <- V(current_tree)$name[-1] # Exclude root
+  prune_node <- sample(nodes, 1)
+
+  # Get subtree rooted at prune_node
+  subtree <- induced_subgraph(current_tree, 
+                      as.character(subcomponent(current_tree, as.character(prune_node), mode="out")$name))
+  
+  # Remove subtree from current tree
+  pruned_tree <- delete_vertices(current_tree, as.character(V(subtree)$name))
+  
+  # Select random attachment point in pruned tree
+  attach_points <- V(pruned_tree)$name
+  new_parent <- sample(attach_points, 1)
+
+  # Create proposed tree by attaching subtree to new parent
+  proposed_tree <- pruned_tree
+  proposed_tree <- add_vertices(proposed_tree, vcount(subtree))
+  V(proposed_tree)$name[(vcount(pruned_tree)+1):vcount(proposed_tree)] <-   V(subtree)$name
+  proposed_tree <- add_edges(proposed_tree, 
+                           c(as.character(new_parent), as.character(prune_node)))
+  
+  subtree_edges <- E(subtree)
+  for (e in subtree_edges) {
+  
+    edge_ends <- ends(subtree, e)
+    proposed_tree <- add_edges(proposed_tree, as.character(edge_ends))
+    
+  }
+
+  # Calculate posterior and acceptance ratio
+  proposed_posterior <- evaluate_density(mu, Sigma, y, pi, z, delta, as_edgelist(proposed_tree), K, nu, Sigma_0, conc) # omit prior since constant and uniform
+
+  current_posterior <- evaluate_density(mu, Sigma, y, pi, z, delta, as_edgelist(current_tree), K, nu, Sigma_0, conc) # omit prior since constant and uniform
+
+  if (log(runif(1)) <   proposed_posterior- current_posterior ) {
+    g <- proposed_tree
+  } else {
+    g <- current_tree
+  }
+  return(g)
+}
+
+
+## z sampler 
+sample_z_rjmcmc = function(y,pi,mu, Sigma, V_T){
+  n = dim(y)[1]
+  p = dim(y)[2]
+  
+  V_T_size = length(V_T)
+  p.z.given.y = matrix(rep(0, n*V_T_size), ncol = V_T_size)
+  for (i in 1:n){
+    for (k in 1:V_T_size){
+      node = V_T[k]
+      p.z.given.y[i, k] = pi[node]*dmvnorm(y[i,], mu[node,], Sigma)
+    }
+    denominator = sum(p.z.given.y[i,])
+    p.z.given.y[i, ] = p.z.given.y[i, ]/denominator
+  }
+  z = rep(0, n)
+  if (V_T_size == 1){
+    z = rep(V_T[1], n)
+    return(z)
+  }
+  for(i in 1:n){
+    z[i] = sample(V_T, size=1,prob=p.z.given.y[i,],replace=TRUE)
+  }
+  return(z)
+}
+
+## pi sampler
+sample_pi = function(z,K, conc = 0.1){
+  K_tilde = K + 1
+  counts = colSums(outer(z,2:K_tilde,FUN="=="))
+  pi = rdirichlet(1,counts + conc)  
+  return(c(0, pi))
+}
+
+# mu sampler
+sample_mu_rjmcmc = function(y, z, K, p, curr_mu, Sigma, V_T, g, delta){
+  mu = curr_mu
+  
+  for(k in V_T){
+    sample.size = sum(z==k)
+    delta_k = delta + sample.size
+    sample.sum = rep(0, p)
+    
+    if (sample.size > 1) {
+      sample.sum = as.matrix(colSums(y[z==k,], ))
+    }
+    
+    if (sample.size == 1) {
+      sample.sum =  as.matrix(y[z==k,])
+    }
+    if (sample.size == 0) {
+      sample.sum = 0
+    }
+
+    neighboring = neighbors(g, as.character(k), mode = "all")$name
+    neighbor_values = mu[as.numeric(neighboring), ]
+    if (is.vector(neighbor_values)){
+      neighbors.sum = as.matrix(neighbor_values)
+    }else{
+      neighbors.sum = as.matrix(colSums(neighbor_values))
+    }
+    num_neighbors = length(neighboring)
+    if (num_neighbors ==0){
+      neighbors.avg = rep(0, dim(mu)[2])
+    } else {
+      neighbors.avg = neighbors.sum/num_neighbors
+    }
+    
+    post.mean = (delta*neighbors.avg + sample.sum)/(delta_k)
+    mu[k,] = rmvnorm(1, post.mean, Sigma/delta_k)
+  }
+  return(mu)
+}
+
+# Sigma sampler
+sample_Sigma_rjmcmc = function(y,K, nu, Sigma_0, delta, z, mu, V_T){
+  n = dim(y)[1]
+  p = dim(y)[2]
+  Sigma_new = Sigma_0
+  nu_new = nu
+  for(k in V_T){
+    sample.size = sum(z==k)
+    nu_new = nu_new + sample.size
+    
+    if (sample.size > 1) {
+      mu_hat = colMeans(y[z==k,])
+      sample_diff = sweep(y[z==k,], 2, mu_hat)
+      mu_diff = mu[k, ] - mu_hat
+      S = t(sample_diff)%*%sample_diff
+      var_term = mu_diff %*% t(mu_diff)
+      Sigma_new = Sigma_new + S + var_term*(delta*sample.size/(sample.size + delta))
+    }
+    
+    if (sample.size == 1) {
+      X = y[z==k,] - mu[k, ]
+      vec = as.vector(X)
+      sample.var = vec %*% t(vec)
+      Sigma_new = Sigma_new + sample.var*(delta*sample.size/(sample.size + delta))
+    }
+  }
+  Sigma = rinvwishart(nu_new, Sigma_new)
+  
+  return(Sigma)
+}
+
+## Main rjmcmc function
+spr = function(y,K,niter =1000, nu, Sigma_0, delta, p0, verbose = FALSE, tuning = 0.1){
+
+  print("In SPR function")
+  ## initialize variables
+  n = dim(y)[1]
+  p = dim(y)[2]
+  
+  ## set up starting points
+  pi = sample_pi(rep(0, n), K)
+  mu = matrix(rep(0, K * p), K, p)  
+  mu_root = rep(0, p)
+  mu = rbind(mu_root, mu)
+  Sigma = diag(p)
+  
+  K_tilde = K + 1
+
+
+g <- make_empty_graph(K_tilde, directed = TRUE)
+vertex_attr(g) <- list(name = 1:K_tilde)
+for (i in 1:(K_tilde -1)){
+  g <- add_edges(g, c(as.character(i), as.character(i + 1)))
+}
+
+  V_T = getTreeNodes(g, K_tilde)$name
+ 
+  z = sample_z_rjmcmc(y,pi,mu,Sigma, V_T)
+  
+  ## set up array to store samples
+  res = list(mu=array(0, dim = c(niter, K + 1, p)), 
+             pi = matrix(nrow=niter,ncol=K + 1), 
+             z = matrix(nrow=niter, ncol=n), 
+             Sigma = array(0, dim = c(niter, p, p)))
+  
+  write_graph(g, paste("saved_trajectories/rjmcmc_trees/tree", 1, ".graphml", sep = ""), format = "graphml")
+  
+  ## initialize chain
+  res$mu[1,,]=mu
+  res$pi[1,]=pi
+  res$z[1,]=z 
+  res$Sigma[1,,]=Sigma
+  
+  print("Initialization finished")
+  ## loop through chain
+  for(i in 2:niter){
+    if (i %% 100 == 0){
+      print("In SPR loop iteration number: ")
+      print(i)
+    }
+    ## sample from full conditionals
+    pi = sample_pi(z,K)
+    mu = sample_mu_rjmcmc(y, z, K, p, mu, Sigma, V_T, g, delta)
+    z = sample_z_rjmcmc(y,pi,mu, Sigma, V_T)
+    Sigma = sample_Sigma_rjmcmc(y,K, nu, Sigma_0, delta, z, mu, V_T)
+    g = sample_T_spr(g, mu, Sigma, y, pi, z, delta, K, nu, Sigma_0, conc = 0.1)
+
+    ## save results 
+    res$mu[i,,] = mu
+    res$pi[i,] = pi
+    res$z[i,] = z
+    res$Sigma[i,,]=Sigma
+    write_graph(g, paste("saved_trajectories/spr_trees/tree", i, ".graphml", sep = ""), format = "graphml")
+  }
+  return(res)
+}
+
+
+```
+
+ 
+```{r}
+## Run the SPR MCMC sampler
+
+## Get the dimensions of the data
+n = dim(y)[1]
+p = dim(y)[2]
+
+## In the absence of knowledge on K, take the overfitted approach and set K as large say n/4
+K = floor(n/4) 
+
+## Inverse Wishart prior hyperparameters for Sigma
+nu = n
+Sigma_0 = 0.2^2*diag(p)
+delta = 1/4
+
+## Main SPR Sampler function
+res.spr = spr(y, K,niter =5000, nu, Sigma_0, delta, p0, verbose = TRUE, tuning)
+
+## Save SPR Output
+save(res.spr, file = "saved_trajectories/spr_output.RData")
+```
+

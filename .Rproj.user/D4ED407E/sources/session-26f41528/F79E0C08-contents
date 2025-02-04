@@ -1,0 +1,158 @@
+---
+title: "Process RJMCMC Samples"
+format: pdf
+---
+
+```{r}
+source("helpers/helper_process_samples.R")
+source("helpers/helper.R")
+library(coda)
+```
+
+```{r}
+niter = 5000
+burnin = 3500
+prefix = "saved_trajectories/rjmcmc_trees/tree"
+transformed_params = matrix(rep(0, 4*niter),niter, 4)
+
+for (i in 1:niter){
+# for (i in 501:502){
+  g = read_graph(paste(prefix, i, ".graphml", sep = ""), format = "graphml")
+  transformed_params[i, 1] = max_degree(g)
+  transformed_params[i, 2] = max_depth(g)
+  transformed_params[i, 3] = num_nodes(g, length(V(g)))
+  transformed_params[i, 4] = num_leaves(g)
+}
+
+transformed_params = transformed_params[(burnin + 1):niter,]
+```
+
+```{r}
+
+## Setup tree related chains
+chain.deg = mcmc(transformed_params[,1])
+varnames(chain.deg) <- "Maximum degree"
+
+chain.depth = mcmc(transformed_params[,2])
+varnames(chain.depth) <- "Maximum depth"
+
+chain.nodes = mcmc(transformed_params[,3])
+varnames(chain.nodes) <- "Number of nodes"
+
+chain.leaves = mcmc(transformed_params[,4])
+varnames(chain.leaves) <- "Number of leaves"
+
+```
+
+
+
+
+```{r}
+## save trace, density and acf plots for tree related parameters
+image_save_prefix = "images/rjmcmc/"
+
+pdf(paste(image_save_prefix, "rjmcmc_deg_trace.pdf", sep = ""))
+make.trace(chain.deg, "maximum degree")
+dev.off()
+
+pdf(paste(image_save_prefix, "rjmcmc_deg_dens.pdf", sep = ""))
+make.bars(chain.deg, "maximum degree", axis_scale = 1.5)
+dev.off()
+
+pdf(paste(image_save_prefix, "rjmcmc_deg_acf.pdf", sep = ""))
+make.acf(chain.deg, "maximum degree")
+dev.off()
+
+pdf(paste(image_save_prefix, "rjmcmc_depth_trace.pdf", sep = ""))
+make.trace(chain.depth, "depth")
+dev.off()
+
+pdf(paste(image_save_prefix, "rjmcmc_depth_dens.pdf", sep = ""))
+make.bars(chain.depth, "depth", axis_scale = 1.2)
+dev.off()
+
+pdf(paste(image_save_prefix, "rjmcmc_depth_acf.pdf", sep = ""))
+make.acf(chain.depth, "depth")
+dev.off()
+
+pdf(paste(image_save_prefix, "rjmcmc_nodes_trace.pdf", sep = ""))
+make.trace(chain.nodes, "number of nodes")
+dev.off()
+
+pdf(paste(image_save_prefix, "rjmcmc_nodes_dens.pdf", sep = ""))
+make.bars(chain.nodes, "number of nodes", axis_scale = 1.5)
+dev.off()
+
+pdf(paste(image_save_prefix, "rjmcmc_nodes_acf.pdf", sep = ""))
+make.acf(chain.nodes, "number of nodes")
+dev.off()
+
+pdf(paste(image_save_prefix, "rjmcmc_leaves_trace.pdf", sep = ""))
+make.trace(chain.leaves, "number of leaves")
+dev.off()
+
+pdf(paste(image_save_prefix, "rjmcmc_leaves_dens.pdf", sep = ""))
+make.bars(chain.leaves, "number of leaves", axis_scale = 1.5)
+dev.off()
+
+pdf(paste(image_save_prefix, "rjmcmc_leaves_acf.pdf", sep = ""))
+make.acf(chain.leaves, "number of leaves")
+dev.off()
+```
+
+
+```{r}
+## Setup chains for all other parameters
+
+load("saved_trajectories/rjmcmc_output.RData")
+
+used_samples = (burnin + 1):niter
+
+chain.z = mcmc(res.rjmcmc$z[used_samples,])
+
+chain.pi = mcmc(res.rjmcmc$pi[used_samples,])
+
+## Setup up a chain for mu for each of p = 4 dimensions
+chain.mu1 = mcmc(res.rjmcmc$mu[used_samples,,1])
+
+chain.mu2 = mcmc(res.rjmcmc$mu[used_samples,,2])
+
+
+
+## Setup a chain for the diagonal values of Sigma (p = 4)
+chain.Sigma1 = mcmc(res.rjmcmc$Sigma[used_samples,1,1])
+
+chain.Sigma2 = mcmc(res.rjmcmc$Sigma[used_samples,2,2])
+
+
+```
+
+
+```{r}
+## ESS for Tree Parameters
+ESSPerIter(chain.deg, niter, burnin)
+ESSPerIter(chain.depth, niter, burnin)
+ESSPerIter(chain.nodes, niter, burnin)
+ESSPerIter(chain.leaves, niter, burnin)
+
+## ESS For other parameters
+
+## Scalar parameters: Lambda Squared and Diagonals of Sigma
+s1 = ESSPerIter(chain.Sigma1, niter, burnin)
+s2 = ESSPerIter(chain.Sigma2, niter, burnin)
+
+mean(c(s1, s2))
+sd(c(s1, s2))
+## vector parameters: z, pi
+ESSPerIterVector(chain.z, niter, burnin)
+ESSPerIterVector(chain.pi, niter, burnin)
+
+## mu...for each dimension (p = 4)
+m1 = ESSPerIterVector(chain.mu1, niter, burnin)
+m2 = ESSPerIterVector(chain.mu2, niter, burnin)
+
+mean(c(m1$avg, m2$avg))
+mean(c(m1$stdev^2, m2$stdev^2))
+```
+ 
+
