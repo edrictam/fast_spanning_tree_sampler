@@ -162,7 +162,7 @@ gibbs_new = function(y, K, niter =1000, nu, Sigma_0, delta){
   print("Initialization finished")
   
   for(i in 2:niter){
-    if (i %% 10 == 0){
+    if (i %% 100 == 0){
       print("In Gibbs loop iteration number: ")
       print(i)
     }

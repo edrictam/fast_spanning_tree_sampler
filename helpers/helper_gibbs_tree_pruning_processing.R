@@ -76,6 +76,7 @@ prune_tree <- function(g, z, K, root = "1"){
   g
 }
 
+
 evaluate_density = function(mu, Sigma, y, pi, z, lambda_sq, edge_list, K, nu, Sigma_0, a1, b1, conc){
   n = dim(y)[1]
   p = dim(y)[2]
@@ -100,73 +101,6 @@ evaluate_density = function(mu, Sigma, y, pi, z, lambda_sq, edge_list, K, nu, Si
   logL
 }
 
-## Given two rooted directed trees, compute the mean path length of each tree
-## (the average length of the paths from the root to the vertices)
-## Return the difference in mean path length as a pseudometric between the two
-## rooted trees
-mean.path.length.diff <- function(g1, g2, r1 = "1", r2 = "1"){
-  
-  dists1 = shortest_paths(g1, r1)
-  dists2 = shortest_paths(g2, r2)
-  
-  sum1 = 0
-  sum2 = 0
-  
-  n1 = length(V(g1))
-  n2 = length(V(g2))
-  
-  for (i in 1:n1){
-    sum1 = sum1 + length(dists1[[1]][[i]])
-  }
-  for (i in 1:n2){
-    sum2 = sum2 + length(dists2[[1]][[i]])
-  }
-  return(abs(sum1/n1 - sum2/n2))
-}
-
-## given the posterior densities of the samples and number of desired samples 
-## in HPD, return the sorted (descending order) indices of the densities  
-get_sorted_indices <- function(density, num_samples_in_hpd){
-  results= sort(density, decreasing = TRUE, index.return = TRUE)
-  sorted_indices = results$ix[1:num_samples_in_hpd]
-}
-
-
-find_diverse_tree_indices <- function(graphlist, sorted_indices, num_samples_in_hpd){
-  max_node = -1
-  max_node_ind = -1
-  max_leaves = -1
-  max_leaves_ind = -1
-  min_node = Inf
-  min_node_ind = Inf
-  min_leaves = Inf
-  min_leaves_ind = Inf
-  
-  for (i in 1:num_samples_in_hpd){
-    index = sorted_indices[i]
-    g = graphlist[[index]]
-    upper_bound = length(V(g))
-    nnodes = num_nodes(g, upper_bound)
-    nleaves = num_leaves(g)
-    if (nnodes > max_node){
-      max_node_ind = index
-      max_node = nnodes
-    }
-    if (nleaves > max_leaves){
-      max_leaves_ind = index
-      max_leaves = nleaves
-    }
-    if (nnodes < min_node){
-      min_node_ind = index
-      min_node = nnodes
-    }
-    if (nleaves < min_leaves){
-      min_leaves_ind = index
-      min_leaves = nleaves
-    }
-  }
-  return(c(max_node_ind, max_leaves_ind, min_node_ind, min_leaves_ind))
-}
 
 ## given a graph g, plot it with tree layout
 plot_as_tree <- function(g, root = "1"){
